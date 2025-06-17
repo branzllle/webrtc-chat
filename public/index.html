@@ -3,8 +3,9 @@
 <head>
   <title>WebRTC Chat</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; padding: 0; }
-    video { width: 45%; margin: 10px; border-radius: 10px; }
+    body { font-family: sans-serif; text-align: center; margin: 0; padding: 0; background: #f4f4f4; }
+    h2 { margin-top: 20px; }
+    video { width: 45%; margin: 10px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.3); }
   </style>
 </head>
 <body>
@@ -20,50 +21,50 @@
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
 
+    // Step 1: Get media stream
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
       document.getElementById('localVideo').srcObject = stream;
       localStream = stream;
-      socket.emit('ready'); // notify server you're ready
+      socket.emit('ready'); // notify server
     }).catch(err => {
       alert('Camera & mic access is required!');
     });
 
-    socket.on('partner-found', () => {
+    // Step 2: When server finds a partner
+    socket.on('partner-found', (data) => {
       alert("Partner joined! 🎥");
 
       if (!peerConnection) {
         setupConnection();
+      }
+
+      if (data.shouldCreateOffer) {
+        createOffer();
       }
     });
 
     function setupConnection() {
       peerConnection = new RTCPeerConnection(config);
 
+      // Send your media to the peer
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
 
+      // Send ICE candidates
       peerConnection.onicecandidate = event => {
         if (event.candidate) {
           socket.emit('signal', { candidate: event.candidate });
         }
       };
 
+      // Receive remote video
       peerConnection.ontrack = event => {
         document.getElementById('remoteVideo').srcObject = event.streams[0];
       };
-
-      peerConnection.onnegotiationneeded = async () => {
-        try {
-          const offer = await peerConnection.createOffer();
-          await peerConnection.setLocalDescription(offer);
-          socket.emit('signal', { description: peerConnection.localDescription });
-        } catch (err) {
-          console.error('Negotiation Error:', err);
-        }
-      };
     }
 
+    // Handle offer/answer and ICE candidates
     socket.on('signal', async data => {
       if (!peerConnection) {
         setupConnection();
@@ -74,7 +75,7 @@
         if (data.description.type === 'offer') {
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
-          socket.emit('signal', { description: peerConnection.localDescription });
+          socket.emit('signal', { description: answer });
         }
       } else if (data.candidate) {
         try {
@@ -85,12 +86,26 @@
       }
     });
 
+    // Alert when disconnected
     socket.on('partner-disconnected', () => {
       alert('Your partner has disconnected.');
       document.getElementById('remoteVideo').srcObject = null;
-      peerConnection && peerConnection.close();
-      peerConnection = null;
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
     });
+
+    // 💡 Function: Only one peer (second one) creates offer
+    async function createOffer() {
+      try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('signal', { description: offer });
+      } catch (err) {
+        console.error('Offer creation error:', err);
+      }
+    }
   </script>
 </body>
 </html>
