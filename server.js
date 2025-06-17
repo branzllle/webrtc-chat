@@ -34,7 +34,6 @@ io.on('connection', socket => {
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
     if (waitingUser === socket) waitingUser = null;
     if (socket.partner) {
       socket.partner.emit('partner-disconnected');
