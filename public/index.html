@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC Chat</title>
+  <title>WebRTC Fix</title>
   <style>
-    body { text-align: center; font-family: sans-serif; margin-top: 30px; }
+    body { font-family: sans-serif; text-align: center; margin-top: 30px; }
     video { width: 45%; margin: 10px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
   </style>
 </head>
 <body>
-  <h2>Simple Video Chat</h2>
+  <h2>1:1 Video Chat</h2>
   <video id="localVideo" autoplay muted playsinline></video>
   <video id="remoteVideo" autoplay playsinline></video>
 
@@ -16,21 +16,19 @@
   <script>
     const socket = io();
     let localStream, peerConnection;
-    const config = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    };
-
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
 
-    // Step 1: Get local stream first
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+    // 1. Get local camera + send ready signal
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    .then(stream => {
       localVideo.srcObject = stream;
       localStream = stream;
       socket.emit('ready');
     });
 
-    socket.on('partner-found', (data) => {
+    socket.on('partner-found', data => {
       console.log("Partner found. Should create offer?", data.shouldCreateOffer);
       createPeerConnection();
 
@@ -42,50 +40,52 @@
     function createPeerConnection() {
       peerConnection = new RTCPeerConnection(config);
 
-      // Add local tracks
+      // ✅ Add local tracks BEFORE anything else
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
 
+      // ✅ Handle ICE
       peerConnection.onicecandidate = event => {
         if (event.candidate) {
           socket.emit('signal', { candidate: event.candidate });
         }
       };
 
+      // ✅ When remote video stream is received
       peerConnection.ontrack = event => {
-        remoteVideo.srcObject = event.streams[0];
+        // Handle multiple tracks
+        if (remoteVideo.srcObject !== event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+        }
       };
     }
 
     async function makeOffer() {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      socket.emit('signal', { description: peerConnection.localDescription });
+      socket.emit('signal', { description: offer });
     }
 
     socket.on('signal', async data => {
       if (!peerConnection) createPeerConnection();
 
       if (data.description) {
-        await peerConnection.setRemoteDescription(data.description);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.description));
+
         if (data.description.type === 'offer') {
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
-          socket.emit('signal', { description: peerConnection.localDescription });
+          socket.emit('signal', { description: answer });
         }
       } else if (data.candidate) {
-        try {
-          await peerConnection.addIceCandidate(data.candidate);
-        } catch (err) {
-          console.error("ICE error", err);
-        }
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
       }
     });
 
     socket.on('partner-disconnected', () => {
-      alert("Partner disconnected.");
-      remoteVideo.srcObject = null;
+      alert("Partner left the chat");
+      if (remoteVideo.srcObject) remoteVideo.srcObject = null;
       if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
