@@ -3,9 +3,8 @@
 <head>
   <title>WebRTC Chat</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; padding: 0; background: #f4f4f4; }
-    h2 { margin-top: 20px; }
-    video { width: 45%; margin: 10px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.3); }
+    body { text-align: center; font-family: sans-serif; margin-top: 30px; }
+    video { width: 45%; margin: 10px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
   </style>
 </head>
 <body>
@@ -21,91 +20,77 @@
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
 
-    // Step 1: Get media stream
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    // Step 1: Get local stream first
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-      document.getElementById('localVideo').srcObject = stream;
+      localVideo.srcObject = stream;
       localStream = stream;
-      socket.emit('ready'); // notify server
-    }).catch(err => {
-      alert('Camera & mic access is required!');
+      socket.emit('ready');
     });
 
-    // Step 2: When server finds a partner
     socket.on('partner-found', (data) => {
-      alert("Partner joined! 🎥");
-
-      if (!peerConnection) {
-        setupConnection();
-      }
+      console.log("Partner found. Should create offer?", data.shouldCreateOffer);
+      createPeerConnection();
 
       if (data.shouldCreateOffer) {
-        createOffer();
+        makeOffer();
       }
     });
 
-    function setupConnection() {
+    function createPeerConnection() {
       peerConnection = new RTCPeerConnection(config);
 
-      // Send your media to the peer
+      // Add local tracks
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
 
-      // Send ICE candidates
       peerConnection.onicecandidate = event => {
         if (event.candidate) {
           socket.emit('signal', { candidate: event.candidate });
         }
       };
 
-      // Receive remote video
       peerConnection.ontrack = event => {
-        document.getElementById('remoteVideo').srcObject = event.streams[0];
+        remoteVideo.srcObject = event.streams[0];
       };
     }
 
-    // Handle offer/answer and ICE candidates
+    async function makeOffer() {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('signal', { description: peerConnection.localDescription });
+    }
+
     socket.on('signal', async data => {
-      if (!peerConnection) {
-        setupConnection();
-      }
+      if (!peerConnection) createPeerConnection();
 
       if (data.description) {
         await peerConnection.setRemoteDescription(data.description);
         if (data.description.type === 'offer') {
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
-          socket.emit('signal', { description: answer });
+          socket.emit('signal', { description: peerConnection.localDescription });
         }
       } else if (data.candidate) {
         try {
           await peerConnection.addIceCandidate(data.candidate);
         } catch (err) {
-          console.error('Error adding ICE candidate:', err);
+          console.error("ICE error", err);
         }
       }
     });
 
-    // Alert when disconnected
     socket.on('partner-disconnected', () => {
-      alert('Your partner has disconnected.');
-      document.getElementById('remoteVideo').srcObject = null;
+      alert("Partner disconnected.");
+      remoteVideo.srcObject = null;
       if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
       }
     });
-
-    // 💡 Function: Only one peer (second one) creates offer
-    async function createOffer() {
-      try {
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('signal', { description: offer });
-      } catch (err) {
-        console.error('Offer creation error:', err);
-      }
-    }
   </script>
 </body>
 </html>
