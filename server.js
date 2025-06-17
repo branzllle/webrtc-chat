@@ -13,17 +13,19 @@ let waitingUser = null;
 io.on('connection', socket => {
   console.log('User connected:', socket.id);
 
-  if (waitingUser) {
-    socket.partner = waitingUser;
-    waitingUser.partner = socket;
+  socket.on('ready', () => {
+    if (waitingUser) {
+      socket.partner = waitingUser;
+      waitingUser.partner = socket;
 
-    socket.emit('partner-found');
-    waitingUser.emit('partner-found');
+      socket.emit('partner-found', { shouldCreateOffer: true });
+      waitingUser.emit('partner-found', { shouldCreateOffer: false });
 
-    waitingUser = null;
-  } else {
-    waitingUser = socket;
-  }
+      waitingUser = null;
+    } else {
+      waitingUser = socket;
+    }
+  });
 
   socket.on('signal', data => {
     if (socket.partner) {
@@ -32,6 +34,7 @@ io.on('connection', socket => {
   });
 
   socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
     if (waitingUser === socket) waitingUser = null;
     if (socket.partner) {
       socket.partner.emit('partner-disconnected');
@@ -39,5 +42,3 @@ io.on('connection', socket => {
     }
   });
 });
-
-server.listen(3000, () => console.log('Server running on http://localhost:3000'));
