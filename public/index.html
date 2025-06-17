@@ -9,14 +9,13 @@
 </head>
 <body>
   <h2>Simple Video Chat</h2>
-  <video id="localVideo" autoplay muted></video>
-  <video id="remoteVideo" autoplay></video>
+  <video id="localVideo" autoplay muted playsinline></video>
+  <video id="remoteVideo" autoplay playsinline></video>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
     let localStream, peerConnection;
-
     const config = {
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
@@ -24,54 +23,73 @@
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
       document.getElementById('localVideo').srcObject = stream;
       localStream = stream;
+      socket.emit('ready'); // notify server you're ready
+    }).catch(err => {
+      alert('Camera & mic access is required!');
+    });
 
-      socket.on('partner-found', () => {
-        peerConnection = new RTCPeerConnection(config);
+    socket.on('partner-found', () => {
+      alert("Partner joined! 🎥");
 
-        localStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream);
-        });
+      if (!peerConnection) {
+        setupConnection();
+      }
+    });
 
-        peerConnection.onicecandidate = event => {
-          if (event.candidate) {
-            socket.emit('signal', { candidate: event.candidate });
-          }
-        };
+    function setupConnection() {
+      peerConnection = new RTCPeerConnection(config);
 
-        peerConnection.ontrack = event => {
-          document.getElementById('remoteVideo').srcObject = event.streams[0];
-        };
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
 
-        peerConnection.onnegotiationneeded = async () => {
+      peerConnection.onicecandidate = event => {
+        if (event.candidate) {
+          socket.emit('signal', { candidate: event.candidate });
+        }
+      };
+
+      peerConnection.ontrack = event => {
+        document.getElementById('remoteVideo').srcObject = event.streams[0];
+      };
+
+      peerConnection.onnegotiationneeded = async () => {
+        try {
           const offer = await peerConnection.createOffer();
           await peerConnection.setLocalDescription(offer);
           socket.emit('signal', { description: peerConnection.localDescription });
-        };
-      });
-
-      socket.on('signal', async data => {
-        if (data.description) {
-          await peerConnection.setRemoteDescription(data.description);
-          if (data.description.type === 'offer') {
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            socket.emit('signal', { description: peerConnection.localDescription });
-          }
-        } else if (data.candidate) {
-          try {
-            await peerConnection.addIceCandidate(data.candidate);
-          } catch (err) {
-            console.error('Error adding ice candidate', err);
-          }
+        } catch (err) {
+          console.error('Negotiation Error:', err);
         }
-      });
+      };
+    }
 
-      socket.on('partner-disconnected', () => {
-        alert('Your partner has disconnected.');
-        location.reload();
-      });
-    }).catch(err => {
-      alert('Camera & mic access is required!');
+    socket.on('signal', async data => {
+      if (!peerConnection) {
+        setupConnection();
+      }
+
+      if (data.description) {
+        await peerConnection.setRemoteDescription(data.description);
+        if (data.description.type === 'offer') {
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          socket.emit('signal', { description: peerConnection.localDescription });
+        }
+      } else if (data.candidate) {
+        try {
+          await peerConnection.addIceCandidate(data.candidate);
+        } catch (err) {
+          console.error('Error adding ICE candidate:', err);
+        }
+      }
+    });
+
+    socket.on('partner-disconnected', () => {
+      alert('Your partner has disconnected.');
+      document.getElementById('remoteVideo').srcObject = null;
+      peerConnection && peerConnection.close();
+      peerConnection = null;
     });
   </script>
 </body>
